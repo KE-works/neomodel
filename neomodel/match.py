@@ -1,3 +1,5 @@
+from collections import Iterable
+
 from .core import StructuredNode, db
 from .properties import AliasProperty
 from .exceptions import MultipleNodesReturned
@@ -222,6 +224,9 @@ class QueryBuilder(object):
         if hasattr(self.node_set, 'limit'):
             self._ast['limit'] = self.node_set.limit
 
+        if hasattr(self.node_set, '_order_by_values'):
+            self.build_order_by_values(ordering_info=self.node_set._order_by_values)
+
         return self
 
     def build_source(self, source):
@@ -258,6 +263,23 @@ class QueryBuilder(object):
         else:
             self._ast['order_by'] = ['{}.{}'.format(ident, p)
                                      for p in source._order_by]
+
+    def build_order_by_values(self, ordering_info):
+        """
+        Appending the query to support ordering by given property values of given property.
+        """
+        ident = self._ast['return']
+        prop_name, prop_values = ordering_info['prop'], ordering_info['prop_values']
+
+        place_holder = next( (q_key for q_key, q_val in self._query_params.items() if q_val == prop_values) , None)
+        if place_holder is None:
+            raise ValueError("Expecting prop: {} to be in query params:{} ".
+                             format(ident+'_'+prop_name, self._query_params))
+
+        self._ast['with'] ='COLLECT ({0}) as objects, {{{1}}} as ordered_object_values ' \
+                           'WITH extract(idx in ordered_object_values | filter(o in objects where o.{2}=idx)[0]) ' \
+                           'as ordered_objects ' \
+                           'UNWIND ordered_objects as {0}'.format(ident, place_holder, prop_name)
 
     def build_traversal(self, traversal):
         """
@@ -534,7 +556,7 @@ class NodeSet(BaseSet):
         :param kwargs: same syntax as `filter()`
         :return: node
         """
-        result = result = self._get(limit=1, **kwargs)
+        result = self._get(limit=1, **kwargs)
         if result:
             return result[0]
         else:
@@ -640,6 +662,34 @@ class NodeSet(BaseSet):
 
         return self
 
+
+    def order_by_values(self, prop, prop_values):
+        """Order by given values of property. Ignore order direction."""
+
+        if not isinstance(prop_values, Iterable):
+             raise TypeError("The type {} of the collection of property values is not Iterable.".format(
+                type(prop_values)))
+
+        if len(prop_values)==0:
+                return self
+
+        if prop.startswith('-'):
+            prop_name = prop[1:]
+        else:
+            prop_name = prop
+
+        if prop_name not in self.source_class.defined_properties(rels=False):
+            raise ValueError("No such property {} on {}".format(
+                prop_name, self.source_class.__name__))
+
+        property_obj = getattr(self.source_class, prop_name)
+        if isinstance(property_obj, AliasProperty):
+            prop_name = property_obj.aliased_to()
+
+        self.filter(**{'{}__in'.format(prop_name):prop_values})
+        self._order_by_values = dict(prop=prop_name, prop_values=prop_values)
+
+        return self
 
 class Traversal(BaseSet):
     """
