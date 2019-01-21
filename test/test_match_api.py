@@ -216,6 +216,27 @@ def test_order_by():
     assert ordered_n[2] == c3
 
 
+def test_order_by_values():
+    for c in Coffee.nodes:
+        c.delete()
+
+    Coffee(name="Cubano", price=5).save()
+    Coffee(name="French", price=10).save()
+    Coffee(name="Italian", price=35).save()
+
+    custom_name_orders = ['French', 'Italian', 'Cubano']
+
+    assert Coffee.nodes.order_by_values('name', custom_name_orders ).all()[0].name == custom_name_orders[0]
+    assert Coffee.nodes.order_by_values('name', custom_name_orders ).all()[2].name == custom_name_orders[2]
+    assert Coffee.nodes.order_by_values('-name', custom_name_orders ).all()[0].name == custom_name_orders[0]
+
+    ns = Coffee.nodes.order_by_values('name', custom_name_orders)
+    assert ns._order_by_values
+    assert isinstance(ns._order_by_values, dict)
+    qb = QueryBuilder(ns).build_ast()
+    assert qb._ast['with']
+
+
 def test_extra_filters():
 
     for c in Coffee.nodes:
